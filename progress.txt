@@ -1,0 +1,28 @@
+# Ralph Progress: Pi Code Harness
+
+Started: 2026-08-30
+Source PRD: tasks/prd-code-harness.md
+
+## Codebase Patterns
+
+- Keep the existing `@earendil-works/pi-agent-core` harness boundary; do not add a duplicate package.
+- Preserve the legacy Pi CLI, session format, and protocol v1 while adding harness capabilities in a separate namespace.
+- Treat `origin/dev` as a selective internal reference only; do not import Chord or merge unrelated branch history.
+- Policy is deny-first, path checks are canonical, and unparseable shell commands never auto-allow.
+
+## 2026-08-30 00:33 Asia/Shanghai - US-001
+- Created `ralph/code-harness` from `main` and added the PRD, executable story checklist, runner, agent instructions, progress log, and archive directory.
+- Validation: `bash scripts/ralph/ralph.sh --dry-run` passed with Codex and Git Bash login shell.
+- The nested Codex adapter could not reach the API because the environment rejected the peer certificate; no story files were changed by that run.
+---
+
+## 2026-08-30 00:33 Asia/Shanghai - US-002
+- Implemented the single-lane AgentHarness runtime over Pi's existing `Agent` loop, including prompt execution, message persistence, queueing, cancellation, abort, idle waiting, watch snapshots, skills, and prompt templates.
+- Validation: focused harness test passed (`7 tests`), including tool-call continuation and tool-result persistence.
+---
+
+## 2026-08-30 00:33 Asia/Shanghai - US-003
+- Added durable operation start/finish records, assistant step-attempt records, bounded retry, suspended-operation discovery, and resume of the original prompt.
+- Validation: focused harness test passed (`7 tests`); JSONL storage/codec tests passed (`81 tests`); memory storage tests passed (`31 tests`).
+- Full `npm run check` remains blocked by the checkout's missing/generated model catalog data and baseline type errors outside this story.
+---

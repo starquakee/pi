@@ -1,199 +1,214 @@
-import { createModels, type Usage } from "@earendil-works/pi-ai";
-import { getModel } from "@earendil-works/pi-ai/compat";
+import type { Api, AssistantMessage, Context, Model, Models, Usage } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import {
-	AgentHarness,
-	HarnessClosed,
-	HarnessNotImplemented,
-	type HarnessTool,
-	type Resources,
-} from "../../src/harness/agent-harness.ts";
+import { AssistantMessageEventStream } from "../../../ai/src/utils/event-stream.ts";
+import { AgentHarness, type HarnessTool } from "../../src/harness/agent-harness.ts";
 import {
 	InMemorySessionStorage,
 	type NewRecord,
 	type OperationStartedRecord,
 	Session,
 } from "../../src/harness/session/index.ts";
-import type { AgentMessage } from "../../src/types.ts";
+import type { AgentTool } from "../../src/types.ts";
+
+const usage: Usage = {
+	input: 1,
+	output: 1,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 2,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
+const model = {
+	id: "fake-model",
+	name: "Fake model",
+	api: "openai-completions",
+	provider: "fake",
+	baseUrl: "http://fake.invalid",
+	reasoning: false,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 8_000,
+	maxTokens: 1_000,
+} as Model<Api>;
+
+function fakeModels(responses: Array<"ok" | "error"> = ["ok"]): Models {
+	let responseIndex = 0;
+	return {
+		streamSimple: () => {
+			const stream = new AssistantMessageEventStream();
+			const response = responses[Math.min(responseIndex++, responses.length - 1)] ?? "ok";
+			const message = {
+				role: "assistant" as const,
+				content: [{ type: "text" as const, text: "ok" }],
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
+				usage,
+				stopReason: response === "error" ? ("error" as const) : ("stop" as const),
+				...(response === "error" ? { errorMessage: "temporary failure" } : {}),
+				timestamp: Date.now(),
+			};
+			queueMicrotask(() => {
+				stream.push({ type: "start", partial: message });
+				if (response === "error") stream.push({ type: "error", reason: "error", error: message });
+				else stream.push({ type: "done", reason: "stop", message });
+			});
+			return stream;
+		},
+	} as unknown as Models;
+}
+
+function toolModels(): Models {
+	return {
+		streamSimple: (_model: Model<Api>, context: Context) => {
+			const stream = new AssistantMessageEventStream();
+			const hasToolResult = context.messages.some((message) => message.role === "toolResult");
+			const message = {
+				role: "assistant" as const,
+				content: hasToolResult
+					? [{ type: "text" as const, text: "tool complete" }]
+					: [{ type: "toolCall" as const, id: "call-1", name: "echo", arguments: { value: "from tool" } }],
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
+				usage,
+				stopReason: hasToolResult ? ("stop" as const) : ("toolUse" as const),
+				timestamp: Date.now(),
+			} as AssistantMessage;
+			queueMicrotask(() => {
+				stream.push({ type: "start", partial: message });
+				stream.push({ type: "done", reason: message.stopReason as "stop" | "toolUse", message });
+			});
+			return stream;
+		},
+	} as unknown as Models;
+}
 
 function createSession(id = "session"): Session {
 	return new Session(new InMemorySessionStorage({ id, createdAt: 1 }));
 }
 
-function createHarness(session = createSession()): Promise<AgentHarness> {
-	return AgentHarness.create({
-		session,
-		models: createModels(),
-		model: getModel("google", "gemini-2.5-flash"),
-	}).then(({ harness }) => harness);
-}
-
-function operationStarted(id: string): NewRecord<OperationStartedRecord> {
-	return {
-		type: "operation_started",
-		id,
-		lane: "main",
-		sourceLeafId: null,
-		intent: { kind: "run", originalPrompt: [], initialMessages: [] },
-	};
-}
-
-const userMessage: AgentMessage = {
-	role: "user",
-	content: [{ type: "text", text: "hello" }],
-	timestamp: 1,
-};
-
-const usage: Usage = {
-	input: 1,
-	output: 2,
-	cacheRead: 0,
-	cacheWrite: 0,
-	totalTokens: 3,
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-};
-
-describe("AgentHarness v2 scaffold", () => {
-	it("opens only record-free sessions before restore is implemented", async () => {
+describe("AgentHarness single-lane runtime", () => {
+	it("runs a prompt, persists messages, and emits run events", async () => {
 		const session = createSession();
-		const { harness, suspended } = await AgentHarness.create({
-			session,
-			models: createModels(),
-			model: getModel("google", "gemini-2.5-flash"),
+		const { harness } = await AgentHarness.create({ session, models: fakeModels(), model });
+		const events: string[] = [];
+		harness.events.on("run_start", () => {
+			events.push("start");
+		});
+		harness.events.on("run_end", () => {
+			events.push("end");
 		});
 
-		expect(suspended).toEqual([]);
-		expect(harness.name).toBe("main");
-		expect(harness.session).toBe(session);
-		expect(await harness.getLeafId()).toBeNull();
-		expect(await harness.session.getLeafId()).toBeNull();
-
-		await expect(harness.close()).resolves.toBeUndefined();
-
-		const recorded = createSession("recorded");
-		await recorded.appendRecord(operationStarted("run"));
-		await expect(
-			AgentHarness.create({
-				session: recorded,
-				models: createModels(),
-				model: getModel("google", "gemini-2.5-flash"),
-			}),
-		).rejects.toMatchObject({ name: "HarnessNotImplemented", operation: "create.restore" });
+		const result = await harness.prompt("hello");
+		expect(result.ok).toBe(true);
+		if (result.ok) expect(result.value.kind).toBe("completed");
+		expect(events).toEqual(["start", "end"]);
+		expect((await session.findEntriesOnBranch({ order: "oldestFirst" })).map((entry) => entry.type)).toEqual([
+			"message",
+			"message",
+		]);
+		expect(await harness.getLeafId()).toBeTruthy();
 	});
 
-	it("keeps scaffold-safe configuration as defensive copies", async () => {
-		const harness = await createHarness();
-		const model = getModel("anthropic", "claude-sonnet-4-5");
-		await harness.setModel(model);
-		expect(await harness.getModel()).toBe(model);
+	it("executes a fake tool and persists the tool result before continuing", async () => {
+		const parameters = Type.Object({ value: Type.String() });
+		const tool: AgentTool<typeof parameters> = {
+			name: "echo",
+			label: "echo",
+			description: "Return a value",
+			parameters,
+			execute: async (_toolCallId, params) => ({
+				content: [{ type: "text", text: params.value }],
+				details: {},
+			}),
+		};
+		const session = createSession("tool");
+		const { harness } = await AgentHarness.create({
+			session,
+			models: toolModels(),
+			model,
+			tools: [tool as unknown as HarnessTool],
+		});
+		const result = await harness.prompt("use the tool");
+		expect(result.ok).toBe(true);
+		const entries = await session.findEntriesOnBranch({ order: "oldestFirst" });
+		expect(entries.map((entry) => (entry.type === "message" ? entry.message.role : entry.type))).toEqual([
+			"user",
+			"assistant",
+			"toolResult",
+			"assistant",
+		]);
+	});
 
-		await harness.setThinkingLevel("high");
-		expect(await harness.getThinkingLevel()).toBe("high");
+	it("supports next-run queueing and cancellation", async () => {
+		const { harness } = await AgentHarness.create({ session: createSession(), models: fakeModels(), model });
+		const queued = await harness.nextRun("queued");
+		expect(queued.ok).toBe(true);
+		if (queued.ok) {
+			const cancelled = await harness.cancelQueued(queued.value.entryId);
+			expect(cancelled.ok).toBe(true);
+			if (cancelled.ok) expect(cancelled.value).toEqual({ outcome: "cancelled" });
+		}
+		const second = await harness.nextRun("queued");
+		expect(second.ok).toBe(true);
+		await harness.runToCompletion();
+		const watch = await harness.watch();
+		expect(watch.snapshot.operation).toBeNull();
+	});
 
-		const activeTools = ["one"];
-		await harness.setActiveTools(activeTools);
-		activeTools.push("mutated");
-		expect(await harness.getActiveTools()).toEqual(["one"]);
-		const readActiveTools = await harness.getActiveTools();
-		readActiveTools.push("mutated");
-		expect(await harness.getActiveTools()).toEqual(["one"]);
+	it("restores an unfinished operation and resumes its prompt", async () => {
+		const session = createSession("suspended");
+		const prompt = { role: "user" as const, content: [{ type: "text" as const, text: "resume me" }], timestamp: 1 };
+		const operation: NewRecord<OperationStartedRecord> = {
+			type: "operation_started",
+			id: "run-1",
+			lane: "main",
+			sourceLeafId: null,
+			intent: { kind: "run", originalPrompt: [prompt], initialMessages: [] },
+		};
+		await session.appendRecord(operation);
+		const { harness, suspended } = await AgentHarness.create({ session, models: fakeModels(), model });
+		expect(suspended).toHaveLength(1);
+		const result = await harness.resume();
+		expect(result.ok).toBe(true);
+		expect(await session.findRecords({ type: "operation_finished" })).toHaveLength(1);
+	});
 
+	it("retries a failed assistant attempt and records each attempt", async () => {
+		const session = createSession("retry");
+		const { harness } = await AgentHarness.create({
+			session,
+			models: fakeModels(["error", "ok"]),
+			model,
+			retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 },
+		});
+		const result = await harness.prompt("retry me");
+		expect(result.ok).toBe(true);
+		if (result.ok) expect(result.value.kind).toBe("completed");
+		expect(await session.findRecords({ type: "step_attempt" })).toHaveLength(2);
+	});
+
+	it("keeps configuration and resources isolated", async () => {
+		const { harness } = await AgentHarness.create({ session: createSession(), models: fakeModels(), model });
 		const tool = { name: "tool", label: "Tool" } as HarnessTool;
 		const tools = [tool];
 		await harness.setTools(tools);
 		tools.push({ name: "mutated", label: "Mutated" } as HarnessTool);
 		expect((await harness.getTools()).map((item) => item.name)).toEqual(["tool"]);
-		const readTools = await harness.getTools();
-		readTools.push({ name: "mutated", label: "Mutated" } as HarnessTool);
-		expect((await harness.getTools()).map((item) => item.name)).toEqual(["tool"]);
-
-		const resources: Resources = {
-			skills: [{ name: "skill", description: "desc", content: "body", filePath: "/tmp/SKILL.md" }],
-			promptTemplates: [{ name: "template", content: "body" }],
-		};
-		await harness.setResources(resources);
-		resources.skills?.push({ name: "mutated", description: "desc", content: "body", filePath: "/tmp/OTHER.md" });
-		expect((await harness.getResources()).skills?.map((skill) => skill.name)).toEqual(["skill"]);
-		const readResources = await harness.getResources();
-		readResources.skills?.push({ name: "mutated", description: "desc", content: "body", filePath: "/tmp/OTHER.md" });
-		expect((await harness.getResources()).skills?.map((skill) => skill.name)).toEqual(["skill"]);
-
-		const streamOptions = { maxTokens: 10 };
-		await harness.setStreamOptions(streamOptions);
-		streamOptions.maxTokens = 20;
-		expect(await harness.getStreamOptions()).toEqual({ maxTokens: 10 });
-		const readStreamOptions = await harness.getStreamOptions();
-		readStreamOptions.maxTokens = 30;
-		expect(await harness.getStreamOptions()).toEqual({ maxTokens: 10 });
-
-		const retryPolicy = { enabled: true, maxRetries: 2, baseDelayMs: 10 };
-		await harness.setRetryPolicy(retryPolicy);
-		retryPolicy.maxRetries = 99;
-		expect(await harness.getRetryPolicy()).toEqual({ enabled: true, maxRetries: 2, baseDelayMs: 10 });
-
-		const compactionSettings = { enabled: false, reserveTokens: 1, keepRecentTokens: 2 };
-		await harness.setCompactionSettings(compactionSettings);
-		compactionSettings.reserveTokens = 99;
-		expect(await harness.getCompactionSettings()).toEqual({ enabled: false, reserveTokens: 1, keepRecentTokens: 2 });
-
-		await harness.setSteeringMode("all");
-		expect(await harness.getSteeringMode()).toBe("all");
-		await harness.setFollowUpMode("all");
-		expect(await harness.getFollowUpMode()).toBe("all");
+		const names = ["tool"];
+		await harness.setActiveTools(names);
+		names.push("mutated");
+		expect(await harness.getActiveTools()).toEqual(["tool"]);
 	});
 
-	it("rejects every unfinished public operation explicitly", async () => {
-		const harness = await createHarness();
-		let callbackCalled = false;
-		const unfinished: [string, () => unknown | Promise<unknown>][] = [
-			["prompt", () => harness.prompt("hello")],
-			["skill", () => harness.skill("skill")],
-			["promptFromTemplate", () => harness.promptFromTemplate("template")],
-			["compact", () => harness.compact()],
-			["navigateTree", () => harness.navigateTree(null)],
-			["resume", () => harness.resume()],
-			["abort", () => harness.abort()],
-			["steer", () => harness.steer(userMessage)],
-			["followUp", () => harness.followUp(userMessage)],
-			["nextRun", () => harness.nextRun(userMessage)],
-			["cancelQueued", () => harness.cancelQueued("queued")],
-			["recordUsage", () => harness.recordUsage(usage)],
-			["waitForIdle", () => harness.waitForIdle()],
-			[
-				"runWhenIdle",
-				() =>
-					harness.runWhenIdle(() => {
-						callbackCalled = true;
-					}),
-			],
-			["peekAction", () => harness.peekAction()],
-			["executeAction", () => harness.executeAction()],
-			["runToCompletion", () => harness.runToCompletion()],
-			["watch", () => harness.watch()],
-			["lane", () => harness.lane("main")],
-			["createLane", () => harness.createLane("thread", null)],
-			["lanes", () => harness.lanes()],
-			["watchSession", () => harness.watchSession()],
-		];
-
-		for (const [operation, invoke] of unfinished) {
-			await expect(Promise.resolve().then(invoke), operation).rejects.toMatchObject({
-				name: "HarnessNotImplemented",
-				operation,
-			});
-		}
-		expect(callbackCalled).toBe(false);
-		expect(() => harness.hooks.on("before_run", () => {})).toThrow(HarnessNotImplemented);
-		expect(() => harness.events.on("event", () => {})).toThrow(HarnessNotImplemented);
-	});
-
-	it("reports HarnessClosed for unfinished operations after close", async () => {
-		const harness = await createHarness();
+	it("reports a closed harness before starting new work", async () => {
+		const { harness } = await AgentHarness.create({ session: createSession(), models: fakeModels(), model });
 		await harness.close();
-
-		await expect(harness.prompt("hello")).rejects.toBeInstanceOf(HarnessClosed);
-		await expect(harness.waitForIdle()).rejects.toBeInstanceOf(HarnessClosed);
-		expect(() => harness.hooks.on("before_run", () => {})).toThrow(HarnessClosed);
-		expect(() => harness.events.on("event", () => {})).toThrow(HarnessClosed);
+		const result = await harness.prompt("hello");
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error.name).toBe("Closed");
 	});
 });

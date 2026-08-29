@@ -10,9 +10,14 @@ import type {
 	SimpleStreamOptions,
 	Usage,
 } from "@earendil-works/pi-ai";
-import type { AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "../types.ts";
+import { uuidv7 } from "@earendil-works/pi-ai";
+import { Agent } from "../agent.ts";
+import type { AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "../types.ts";
 import type { CompactionSettings } from "./compaction/compaction.ts";
+import { HarnessEventBus } from "./events.ts";
+import { convertToLlm } from "./messages.ts";
 import { type Result as ResultValue, TaggedError } from "./result.ts";
+import { buildSessionContext } from "./session/context.ts";
 import type {
 	BranchSummaryEntry,
 	CompactionEntry,
@@ -318,13 +323,25 @@ export class AgentHarness implements AgentLane {
 	private compactionSettings: CompactionSettings;
 	private steeringMode: QueueMode;
 	private followUpMode: QueueMode;
+	private readonly agent: Agent;
+	private readonly eventBus: HarnessEventBus;
+	private nextRunQueue: Array<{ entryId: string; message: AgentMessage }> = [];
+	private steeringQueue: Array<{ entryId: string; message: AgentMessage }> = [];
+	private followUpQueue: Array<{ entryId: string; message: AgentMessage }> = [];
+	private readonly persistedEntryIds = new Map<AgentMessage, string>();
+	private activeRun?: Promise<RunResult>;
+	private activeRunId?: string;
+	private resumeOperationId?: string;
+	private snapshot: LaneSnapshot;
+	private suspendedOperations: SuspendedOperation[] = [];
 	private closed = false;
 
-	private constructor(options: AgentHarnessOptions) {
+	private constructor(options: AgentHarnessOptions, initialMessages: AgentMessage[], systemPrompt: string) {
 		this.durableSession = options.session;
 		this.session = options.session;
 		this.hooks = new UnavailableRegistry("hooks.on", () => this.closed);
-		this.events = new UnavailableRegistry("events.on", () => this.closed);
+		this.eventBus = new HarnessEventBus();
+		this.events = this.eventBus;
 		this.model = options.model;
 		this.thinkingLevel = options.thinkingLevel ?? "off";
 		this.activeToolNames = [...(options.activeToolNames ?? options.tools?.map((tool) => tool.name) ?? [])];
@@ -342,14 +359,73 @@ export class AgentHarness implements AgentLane {
 		};
 		this.steeringMode = options.steeringMode ?? "one-at-a-time";
 		this.followUpMode = options.followUpMode ?? "one-at-a-time";
+		this.agent = new Agent({
+			initialState: {
+				systemPrompt,
+				model: options.model,
+				thinkingLevel: this.thinkingLevel,
+				messages: initialMessages,
+				tools: this.tools.filter((tool) => this.activeToolNames.includes(tool.name)),
+			},
+			convertToLlm: options.toProviderMessages ?? convertToLlm,
+			streamFn: (model, context, streamOptions) =>
+				options.models.streamSimple(model, context, {
+					...this.streamOptions,
+					...streamOptions,
+				}),
+			steeringMode: this.steeringMode,
+			followUpMode: this.followUpMode,
+		});
+		this.agent.subscribe(async (event) => this.handleAgentEvent(event));
+		this.snapshot = {
+			lane: "main",
+			transcript: [],
+			leafId: null,
+			operation: null,
+			queues: { steer: [], followUp: [], nextRun: [] },
+			pendingWrites: [],
+			faulted: false,
+		};
 	}
 
 	static async create(
 		options: AgentHarnessOptions,
 	): Promise<{ harness: AgentHarness; suspended: SuspendedOperation[] }> {
-		const [record] = await options.session.findRecords({ limit: 1 });
-		if (record !== undefined) throw new HarnessNotImplemented("create.restore");
-		return { harness: new AgentHarness(options), suspended: [] };
+		const entries = await options.session.findEntriesOnBranch({ order: "oldestFirst" });
+		const context = buildSessionContext(entries);
+		const systemPrompt =
+			typeof options.systemPrompt === "function" ? await options.systemPrompt() : (options.systemPrompt ?? "");
+		const harness = new AgentHarness(options, context.messages, systemPrompt);
+		const starts = await options.session.findRecords({
+			type: "operation_started",
+			lane: "main",
+			order: "oldestFirst",
+		});
+		const finished = new Set(
+			(await options.session.findRecords({ type: "operation_finished", lane: "main", order: "oldestFirst" })).map(
+				(record) => record.runId,
+			),
+		);
+		harness.suspendedOperations = starts
+			.filter((record) => !finished.has(record.id) && record.intent.kind === "run")
+			.map((record) => {
+				if (record.intent.kind !== "run") throw new Error("Expected a run operation");
+				return {
+					lane: "main",
+					kind: "run" as const,
+					id: record.id,
+					startedAt: record.timestamp,
+					reason: "crash" as const,
+					prompt: record.intent.originalPrompt,
+					missing: { tools: [], models: [] },
+				};
+			});
+		harness.snapshot = {
+			...harness.snapshot,
+			transcript: entries,
+			leafId: await options.session.getLeafId(),
+		};
+		return { harness, suspended: harness.suspendedOperations.map((operation) => ({ ...operation })) };
 	}
 
 	private unavailable<T>(operation: string): Promise<T> {
@@ -362,14 +438,54 @@ export class AgentHarness implements AgentLane {
 
 	async prompt(_text: string, _images?: ImageContent[]): Promise<RunResult>;
 	async prompt(_message: AgentMessage | AgentMessage[]): Promise<RunResult>;
-	async prompt(_input: string | AgentMessage | AgentMessage[], _images?: ImageContent[]): Promise<RunResult> {
-		return this.unavailable("prompt");
+	async prompt(input: string | AgentMessage | AgentMessage[], images?: ImageContent[]): Promise<RunResult> {
+		if (this.closed) return { ok: false, error: new Closed({ message: "AgentHarness is closed" }) };
+		if (this.activeRun) {
+			return {
+				ok: false,
+				error: new LaneBusy({
+					lane: this.name,
+					operationId: this.activeRunId ?? "unknown",
+					operationKind: "run",
+					message: "The main lane is already running",
+				}),
+			};
+		}
+		const messages = normalizeMessages(input, images);
+		const queued = this.nextRunQueue.splice(0).map((item) => item.message);
+		const runId = this.resumeOperationId ?? uuidv7();
+		if (!this.resumeOperationId) {
+			await this.durableSession.appendRecord({
+				type: "operation_started",
+				id: runId,
+				lane: this.name,
+				sourceLeafId: await this.durableSession.getLeafId(),
+				intent: { kind: "run", originalPrompt: [...queued, ...messages], initialMessages: [] },
+			});
+		}
+		const run = this.executeRun(runId, [...queued, ...messages]);
+		this.activeRunId = runId;
+		this.activeRun = run;
+		void run.finally(() => {
+			if (this.activeRun === run) {
+				this.activeRun = undefined;
+				this.activeRunId = undefined;
+			}
+		});
+		return run;
 	}
 	async skill(_name: string, _additionalInstructions?: string): Promise<RunResult> {
-		return this.unavailable("skill");
+		const skill = this.resources.skills?.find((candidate) => candidate.name === _name);
+		if (!skill) return { ok: false, error: new UnknownSkill({ name: _name, message: `Unknown skill: ${_name}` }) };
+		return this.prompt(`${skill.content}${_additionalInstructions ? `\n\n${_additionalInstructions}` : ""}`);
 	}
 	async promptFromTemplate(_name: string, _args?: string[]): Promise<RunResult> {
-		return this.unavailable("promptFromTemplate");
+		const template = this.resources.promptTemplates?.find((candidate) => candidate.name === _name);
+		if (!template)
+			return { ok: false, error: new UnknownTemplate({ name: _name, message: `Unknown template: ${_name}` }) };
+		let content = template.content;
+		for (const [index, arg] of (_args ?? []).entries()) content = content.replaceAll(`$${index + 1}`, arg);
+		return this.prompt(content);
 	}
 	async compact(_options?: { customInstructions?: string }): Promise<CompactionResult> {
 		return this.unavailable("compact");
@@ -378,37 +494,130 @@ export class AgentHarness implements AgentLane {
 		return this.unavailable("navigateTree");
 	}
 	async resume(): Promise<ResumeResult> {
-		return this.unavailable("resume");
+		if (this.closed) return { ok: false, error: new Closed({ message: "AgentHarness is closed" }) };
+		if (this.activeRun) {
+			return {
+				ok: false,
+				error: new LaneBusy({
+					lane: this.name,
+					operationId: this.activeRunId ?? "unknown",
+					operationKind: "run",
+					message: "The main lane is already running",
+				}),
+			};
+		}
+		const suspended = this.suspendedOperations.shift();
+		if (!suspended?.prompt || suspended.prompt.length === 0) {
+			return {
+				ok: false,
+				error: new NothingToResume({ lane: this.name, message: "No suspended run is available" }),
+			};
+		}
+		this.resumeOperationId = suspended.id;
+		try {
+			const result = await this.prompt(suspended.prompt);
+			if (!result.ok) {
+				if (result.error instanceof LaneBusy) {
+					return {
+						ok: false,
+						error: new LaneBusy({
+							lane: this.name,
+							operationId: this.activeRunId ?? "unknown",
+							operationKind: "run",
+							message: result.error.message,
+						}),
+					};
+				}
+				if (result.error instanceof Closed)
+					return { ok: false, error: new Closed({ message: result.error.message }) };
+				return { ok: false, error: new Closed({ message: result.error.message }) };
+			}
+			return { ok: true, value: { operation: "run" as const, ...result.value } };
+		} finally {
+			this.resumeOperationId = undefined;
+		}
 	}
 	async abort(): Promise<AbortResult> {
-		return this.unavailable("abort");
+		if (this.closed) return { ok: false, error: new Closed({ message: "AgentHarness is closed" }) };
+		if (!this.activeRun || !this.activeRunId) {
+			return { ok: false, error: new NoActiveOperation({ lane: this.name, message: "No active operation" }) };
+		}
+		this.agent.abort();
+		return { ok: true, value: { runId: this.activeRunId, steer: [], followUp: [] } };
 	}
 	async steer(_text: string, _images?: ImageContent[]): Promise<QueueResult>;
 	async steer(_message: AgentMessage): Promise<QueueResult>;
-	async steer(_input: string | AgentMessage, _images?: ImageContent[]): Promise<QueueResult> {
-		return this.unavailable("steer");
+	async steer(input: string | AgentMessage, images?: ImageContent[]): Promise<QueueResult> {
+		if (this.closed) return { ok: false, error: new Closed({ message: "AgentHarness is closed" }) };
+		if (!this.activeRun) return { ok: false, error: new NoActiveRun({ lane: this.name, message: "No active run" }) };
+		const message = normalizeMessages(input, images)[0];
+		if (!message)
+			return {
+				ok: false,
+				error: new InvalidMessage({ lane: this.name, reason: "empty", message: "Message is empty" }),
+			};
+		const entryId = uuidv7();
+		this.steeringQueue.push({ entryId, message });
+		this.syncAgentQueues();
+		this.refreshQueueSnapshot();
+		return { ok: true, value: { entryId } };
 	}
 	async followUp(_text: string, _images?: ImageContent[]): Promise<QueueResult>;
 	async followUp(_message: AgentMessage): Promise<QueueResult>;
-	async followUp(_input: string | AgentMessage, _images?: ImageContent[]): Promise<QueueResult> {
-		return this.unavailable("followUp");
+	async followUp(input: string | AgentMessage, images?: ImageContent[]): Promise<QueueResult> {
+		if (this.closed) return { ok: false, error: new Closed({ message: "AgentHarness is closed" }) };
+		if (!this.activeRun) return { ok: false, error: new NoActiveRun({ lane: this.name, message: "No active run" }) };
+		const message = normalizeMessages(input, images)[0];
+		if (!message)
+			return {
+				ok: false,
+				error: new InvalidMessage({ lane: this.name, reason: "empty", message: "Message is empty" }),
+			};
+		const entryId = uuidv7();
+		this.followUpQueue.push({ entryId, message });
+		this.syncAgentQueues();
+		this.refreshQueueSnapshot();
+		return { ok: true, value: { entryId } };
 	}
 	async nextRun(_text: string, _images?: ImageContent[]): Promise<QueueResult>;
 	async nextRun(_message: AgentMessage): Promise<QueueResult>;
-	async nextRun(_input: string | AgentMessage, _images?: ImageContent[]): Promise<QueueResult> {
-		return this.unavailable("nextRun");
+	async nextRun(input: string | AgentMessage, images?: ImageContent[]): Promise<QueueResult> {
+		if (this.closed) return { ok: false, error: new Closed({ message: "AgentHarness is closed" }) };
+		const message = normalizeMessages(input, images)[0];
+		if (!message)
+			return {
+				ok: false,
+				error: new InvalidMessage({ lane: this.name, reason: "empty", message: "Message is empty" }),
+			};
+		const entryId = uuidv7();
+		this.nextRunQueue.push({ entryId, message });
+		this.refreshQueueSnapshot();
+		return { ok: true, value: { entryId } };
 	}
 	async cancelQueued(_entryId: string): Promise<CancelQueuedResult> {
-		return this.unavailable("cancelQueued");
+		if (this.closed) return { ok: false, error: new Closed({ message: "AgentHarness is closed" }) };
+		const queues = [this.steeringQueue, this.followUpQueue, this.nextRunQueue];
+		for (const queue of queues) {
+			const index = queue.findIndex((item) => item.entryId === _entryId);
+			if (index !== -1) {
+				queue.splice(index, 1);
+				this.syncAgentQueues();
+				this.refreshQueueSnapshot();
+				return { ok: true, value: { outcome: "cancelled" } };
+			}
+		}
+		return { ok: true, value: { outcome: "already_cleared" } };
 	}
 	async recordUsage(_usage: Usage, _options?: { entryId?: string; details?: JsonValue }): Promise<RecordUsageResult> {
 		return this.unavailable("recordUsage");
 	}
 	async waitForIdle(): Promise<void> {
-		return this.unavailable("waitForIdle");
+		if (this.closed && !this.activeRun) return;
+		await this.activeRun;
 	}
 	async runWhenIdle(_callback: () => void | Promise<void>): Promise<void> {
-		return this.unavailable("runWhenIdle");
+		await this.waitForIdle();
+		await _callback();
 	}
 	async peekAction(): Promise<ActionInfo | undefined> {
 		return this.unavailable("peekAction");
@@ -417,28 +626,41 @@ export class AgentHarness implements AgentLane {
 		return this.unavailable("executeAction");
 	}
 	async runToCompletion(): Promise<void> {
-		return this.unavailable("runToCompletion");
+		await this.waitForIdle();
+		if (this.nextRunQueue.length === 0) return;
+		const messages = this.nextRunQueue.splice(0).map((item) => item.message);
+		await this.prompt(messages);
 	}
 	async getModel(): Promise<Model<Api>> {
 		return this.model;
 	}
 	async setModel(model: Model<Api>): Promise<void> {
 		this.model = model;
+		this.agent.state.model = model;
 	}
 	async getThinkingLevel(): Promise<ThinkingLevel> {
 		return this.thinkingLevel;
 	}
 	async setThinkingLevel(level: ThinkingLevel): Promise<void> {
 		this.thinkingLevel = level;
+		this.agent.state.thinkingLevel = level;
 	}
 	async getActiveTools(): Promise<string[]> {
 		return [...this.activeToolNames];
 	}
 	async setActiveTools(names: string[]): Promise<void> {
 		this.activeToolNames = [...names];
+		this.agent.state.tools = this.tools.filter((tool) => this.activeToolNames.includes(tool.name));
 	}
 	async watch(): Promise<WatchHandle<LaneSnapshot>> {
-		return this.unavailable("watch");
+		if (this.closed) return Promise.reject(new HarnessClosed());
+		await this.refreshSnapshot();
+		const handle = this.eventBus.watch(() => structuredClone(this.snapshot));
+		return {
+			snapshot: structuredClone(handle.snapshot),
+			start: (listener) => handle.start(listener),
+			unsubscribe: () => handle.unsubscribe(),
+		};
 	}
 
 	async lane(_name: string): Promise<AgentLane | undefined> {
@@ -456,6 +678,7 @@ export class AgentHarness implements AgentLane {
 	async setTools(tools: HarnessTool[], activeNames?: string[]): Promise<void> {
 		this.tools = [...tools];
 		this.activeToolNames = [...(activeNames ?? tools.map((tool) => tool.name))];
+		this.agent.state.tools = this.tools.filter((tool) => this.activeToolNames.includes(tool.name));
 	}
 	async getResources(): Promise<Resources> {
 		return {
@@ -492,17 +715,188 @@ export class AgentHarness implements AgentLane {
 	}
 	async setSteeringMode(mode: QueueMode): Promise<void> {
 		this.steeringMode = mode;
+		this.agent.steeringMode = mode;
 	}
 	async getFollowUpMode(): Promise<QueueMode> {
 		return this.followUpMode;
 	}
 	async setFollowUpMode(mode: QueueMode): Promise<void> {
 		this.followUpMode = mode;
+		this.agent.followUpMode = mode;
 	}
 	async watchSession(): Promise<WatchHandle<SessionSnapshot>> {
 		return this.unavailable("watchSession");
 	}
 	async close(): Promise<void> {
 		this.closed = true;
+		this.agent.abort();
+		await this.activeRun;
 	}
+
+	private async executeRun(runId: string, messages: AgentMessage[]): Promise<RunResult> {
+		this.snapshot = { ...this.snapshot, operation: { id: runId, kind: "run", status: "running" } };
+		this.eventBus.emit({ type: "run_start", lane: this.name, runId });
+		let outcome: RunOutcome["kind"] = "completed";
+		let operationError: { code: string; message: string } | undefined;
+		let attempt = 0;
+		try {
+			let finalMessage: AssistantMessage | undefined;
+			while (true) {
+				attempt++;
+				await this.agent.prompt(messages);
+				finalMessage = [...this.agent.state.messages]
+					.reverse()
+					.find((message): message is AssistantMessage => message.role === "assistant");
+				if (!finalMessage) break;
+				const resultEntryId = this.persistedEntryIds.get(finalMessage);
+				if (resultEntryId) {
+					await this.durableSession.appendRecord({
+						type: "step_attempt",
+						id: uuidv7(),
+						lane: this.name,
+						runId,
+						step: "assistant",
+						attempt,
+						resultEntryId,
+					});
+				}
+				if (
+					finalMessage.stopReason !== "error" ||
+					!this.retryPolicy.enabled ||
+					attempt > Math.max(0, this.retryPolicy.maxRetries)
+				) {
+					break;
+				}
+				this.agent.state.messages = this.agent.state.messages.slice(0, -1);
+				const delayMs = Math.min(this.retryPolicy.baseDelayMs * 2 ** (attempt - 1), 60_000);
+				if (delayMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+			}
+			if (!finalMessage) {
+				outcome = "failed";
+				operationError = { code: "no_assistant", message: "Agent produced no assistant message" };
+				return {
+					ok: false,
+					error: new InvalidMessage({
+						lane: this.name,
+						reason: "no_assistant",
+						message: "Agent produced no assistant message",
+					}),
+				};
+			}
+			const finalEntryId = this.persistedEntryIds.get(finalMessage) ?? uuidv7();
+			const leafId = (await this.durableSession.getLeafId()) ?? finalEntryId;
+			const value =
+				finalMessage.stopReason === "aborted"
+					? { runId, kind: "aborted" as const, leafId, finalEntryId, finalMessage }
+					: finalMessage.stopReason === "error"
+						? {
+								runId,
+								kind: "failed" as const,
+								leafId,
+								error: { code: "agent_error", message: finalMessage.errorMessage ?? "Agent run failed" },
+								finalEntryId,
+								finalMessage,
+							}
+						: { runId, kind: "completed" as const, leafId, finalEntryId, finalMessage };
+			outcome = value.kind;
+			if (value.kind === "failed") operationError = value.error;
+			return { ok: true, value };
+		} catch (error) {
+			outcome = "failed";
+			operationError = {
+				code: "agent_error",
+				message: error instanceof Error ? error.message : String(error),
+			};
+			return {
+				ok: false,
+				error: new InvalidMessage({
+					lane: this.name,
+					reason: error instanceof Error ? error.message : String(error),
+					message: "Agent run failed",
+				}),
+			};
+		} finally {
+			this.steeringQueue = [];
+			this.followUpQueue = [];
+			this.agent.clearAllQueues();
+			await this.refreshSnapshot();
+			await this.durableSession.appendRecord({
+				type: "operation_finished",
+				id: uuidv7(),
+				lane: this.name,
+				runId,
+				outcome: outcome === "completed" ? "completed" : outcome === "aborted" ? "aborted" : "failed",
+				...(operationError ? { error: operationError } : {}),
+			});
+			this.eventBus.emit({
+				type: "run_end",
+				lane: this.name,
+				runId,
+				outcome: outcome === "aborted" ? "aborted" : outcome === "failed" ? "failed" : "completed",
+				leafId: this.snapshot.leafId ?? "",
+			});
+			this.snapshot = { ...this.snapshot, operation: null };
+		}
+	}
+
+	private async handleAgentEvent(event: AgentEvent): Promise<void> {
+		if (event.type === "message_end") {
+			const id = await this.durableSession.appendMessage(toPersistableMessage(event.message));
+			this.persistedEntryIds.set(event.message, id);
+		}
+		if (event.type === "message_update") {
+			this.snapshot = {
+				...this.snapshot,
+				operation: this.snapshot.operation ? { ...this.snapshot.operation } : null,
+			};
+		}
+	}
+
+	private refreshQueueSnapshot(): void {
+		this.snapshot = {
+			...this.snapshot,
+			queues: {
+				steer: this.steeringQueue.map((item) => ({ entryId: item.entryId, message: item.message })),
+				followUp: this.followUpQueue.map((item) => ({ entryId: item.entryId, message: item.message })),
+				nextRun: this.nextRunQueue.map((item) => ({ entryId: item.entryId, message: item.message })),
+			},
+		};
+	}
+
+	private syncAgentQueues(): void {
+		this.agent.clearSteeringQueue();
+		for (const item of this.steeringQueue) this.agent.steer(item.message);
+		this.agent.clearFollowUpQueue();
+		for (const item of this.followUpQueue) this.agent.followUp(item.message);
+	}
+
+	private async refreshSnapshot(): Promise<void> {
+		this.snapshot = {
+			...this.snapshot,
+			transcript: await this.session.findEntriesOnBranch({ order: "oldestFirst" }),
+			leafId: await this.session.getLeafId(),
+		};
+		this.refreshQueueSnapshot();
+	}
+}
+
+function normalizeMessages(input: string | AgentMessage | AgentMessage[], images?: ImageContent[]): AgentMessage[] {
+	if (Array.isArray(input)) return input;
+	if (typeof input !== "string") return [input];
+	return [{ role: "user", content: [{ type: "text", text: input }, ...(images ?? [])], timestamp: Date.now() }];
+}
+
+function toPersistableMessage(message: AgentMessage): AgentMessage {
+	if (message.role !== "toolResult") return message;
+	return {
+		role: message.role,
+		toolCallId: message.toolCallId,
+		toolName: message.toolName,
+		content: message.content,
+		isError: message.isError,
+		timestamp: message.timestamp,
+		...(message.details === undefined ? {} : { details: message.details }),
+		...(message.usage === undefined ? {} : { usage: message.usage }),
+		...(message.addedToolNames === undefined ? {} : { addedToolNames: message.addedToolNames }),
+	};
 }

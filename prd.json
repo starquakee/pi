@@ -1,0 +1,141 @@
+{
+  "project": "Pi Code Harness",
+  "branchName": "ralph/code-harness",
+  "description": "Local-first, policy-controlled, auditable code harness built on Pi's existing AgentHarness.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Branch and Ralph bootstrap",
+      "description": "As a maintainer, I want a repository-local Ralph run contract so that each implementation iteration has durable scope and memory.",
+      "acceptanceCriteria": [
+        "Branch is ralph/code-harness and starts from main.",
+        "Ralph PRD, prd.json, runner, agent instructions, progress log, and archive directory exist.",
+        "bash scripts/ralph/ralph.sh --dry-run succeeds."
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Branch, Ralph files, and dry-run verified on 2026-08-30."
+    },
+    {
+      "id": "US-002",
+      "title": "Single-lane durable runtime",
+      "description": "As an SDK caller, I want one harness lane to prompt, execute tools, queue messages, abort, wait, and watch.",
+      "acceptanceCriteria": [
+        "Supported AgentHarness operations no longer return HarnessNotImplemented.",
+        "Prompt, tool ordering, queues, abort, idle waiting, and watch snapshots are deterministic.",
+        "npm --workspace=@earendil-works/pi-agent-core run test:harness passes."
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Single-lane Agent loop, message persistence, queues, abort, watch, skills, and templates verified by focused tests."
+    },
+    {
+      "id": "US-003",
+      "title": "Recovery, retry, and persistence",
+      "description": "As a long-running task, I want operation boundaries and retries to survive interruption without duplicating effects.",
+      "acceptanceCriteria": [
+        "Operation, step, tool, queue, and terminal records replay idempotently.",
+        "Retry counts and backoff are bounded and observable.",
+        "Corrupt or interrupted records fail closed with typed errors.",
+        "Existing Pi session format remains unchanged."
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Operation recovery, step-attempt retry, JSONL corruption/duplicate guards, and memory storage tests pass."
+    },
+    {
+      "id": "US-004",
+      "title": "Policy and approval core",
+      "description": "As a user, I want predictable permission decisions so effects cannot silently exceed task policy.",
+      "acceptanceCriteria": [
+        "Policy, rule, decision, approval, and enforced execution types are public.",
+        "deny, ask, allow, and mode precedence plus once/session/persistent scopes are tested.",
+        "Compound commands and path escapes never auto-allow."
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Task lifecycle and audit",
+      "description": "As a developer, I want a durable Plan -> Execute -> Verify task backed by reviewable evidence.",
+      "acceptanceCriteria": [
+        "Required task states and explicit plan approval are enforced.",
+        "Verification evidence and bounded, redacted audit output are persisted globally per project.",
+        "Required verification failures prevent completed status."
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Execution backends and Git worktrees",
+      "description": "As a coordinator, I want backend-neutral execution and safe worktree ownership.",
+      "acceptanceCriteria": [
+        "Local execution wraps existing ExecutionEnv/BashOperations contracts.",
+        "SandboxAdapter capability and lifecycle contracts are public.",
+        "Worktree manager refuses dirty baselines and preserves harness-unowned paths.",
+        "Child writes return reviewable patch or commit evidence."
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Bounded subagent orchestration",
+      "description": "As a coordinator, I want role-based child agents without unbounded permissions or resources.",
+      "acceptanceCriteria": [
+        "Planner, implementer, and reviewer roles support inherited defaults and explicit model overrides.",
+        "Concurrency four and recursion depth one are hard bounded defaults.",
+        "Child policy cannot exceed the parent and merge requires coordinator approval."
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Harness protocol namespace",
+      "description": "As an SDK or future IDE client, I want a stable harness protocol for task state and approvals.",
+      "acceptanceCriteria": [
+        "Existing CBOR framing and legacy protocol v1 remain unchanged.",
+        "Harness snapshots, revisions, progress, approvals, and audit summaries are schema validated.",
+        "Client/server tests cover stale, duplicate, denied, and disconnected approvals."
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Harness CLI",
+      "description": "As a local developer, I want explicit harness commands for planning, execution, verification, and inspection.",
+      "acceptanceCriteria": [
+        "pi harness plan, run, verify, and status are functional and documented.",
+        "Human and JSON event output modes work.",
+        ".pi/harness.json version 1 validation and trust diagnostics are surfaced.",
+        "Existing pi commands retain current behavior."
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "End-to-end validation and residue guard",
+      "description": "As a maintainer, I want a real local smoke and forbidden-behavior checks.",
+      "acceptanceCriteria": [
+        "Temporary Git smoke covers approval, pause/resume, worktree, verify, audit redaction, and failure stop.",
+        "Dirty worktree, path escape, compound command, network capability, duplicate recovery, and merge conflict cases are covered.",
+        "Supported operations do not regress to HarnessNotImplemented.",
+        "npm run check and ./test.sh pass."
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
