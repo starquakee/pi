@@ -91,10 +91,10 @@ Pi already exposes an extensible agent loop, durable session primitives, tool ho
 
 **Acceptance Criteria:**
 
-- [ ] Public types include `HarnessPolicy`, `PolicyRule`, `PolicyDecision`, `ApprovalBroker`, and `PolicyEnforcedExecutionEnv`.
-- [ ] `deny`, `ask`, `allow`, and mode decisions follow the documented precedence and support once/session/persistent scope.
-- [ ] Compound commands are classified segment-by-segment; unsafe parsing never auto-allows.
-- [ ] Path checks reject canonical and symlink/junction escapes and every denial is auditable.
+- [x] Public types include `HarnessPolicy`, `PolicyRule`, `PolicyDecision`, `ApprovalBroker`, and `PolicyEnforcedExecutionEnv`.
+- [x] `deny`, `ask`, `allow`, and mode decisions follow the documented precedence and support once/session/persistent scope.
+- [x] Compound commands are classified segment-by-segment; unsafe parsing never auto-allows.
+- [x] Path checks reject canonical and symlink/junction escapes and every denial is auditable.
 
 ### US-005: Task lifecycle and audit
 

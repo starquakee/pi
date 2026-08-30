@@ -12,10 +12,25 @@ import type {
 } from "@earendil-works/pi-ai";
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { Agent } from "../agent.ts";
-import type { AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "../types.ts";
+import type {
+	AgentEvent,
+	AgentMessage,
+	AgentTool,
+	BeforeToolCallContext,
+	BeforeToolCallResult,
+	QueueMode,
+	ThinkingLevel,
+} from "../types.ts";
 import type { CompactionSettings } from "./compaction/compaction.ts";
 import { HarnessEventBus } from "./events.ts";
 import { convertToLlm } from "./messages.ts";
+import {
+	type ApprovalBroker,
+	evaluatePolicy,
+	type HarnessPolicy,
+	type PolicyRequest,
+	policyApprovalKey,
+} from "./policy.ts";
 import { type Result as ResultValue, TaggedError } from "./result.ts";
 import { buildSessionContext } from "./session/context.ts";
 import type {
@@ -265,6 +280,10 @@ export interface AgentHarnessOptions {
 	toProviderMessages?: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	entryProjectors?: Record<string, EntryProjector>;
 	context?: TelemetryContext;
+	/** Optional policy evaluated before every tool call. */
+	policy?: HarnessPolicy;
+	/** Broker used when a policy rule requires interactive approval. */
+	approvalBroker?: ApprovalBroker;
 }
 
 export interface WatchHandle<TSnapshot> {
@@ -325,6 +344,9 @@ export class AgentHarness implements AgentLane {
 	private followUpMode: QueueMode;
 	private readonly agent: Agent;
 	private readonly eventBus: HarnessEventBus;
+	private readonly policy?: HarnessPolicy;
+	private readonly approvalBroker?: ApprovalBroker;
+	private readonly policySessionApprovals = new Set<string>();
 	private nextRunQueue: Array<{ entryId: string; message: AgentMessage }> = [];
 	private steeringQueue: Array<{ entryId: string; message: AgentMessage }> = [];
 	private followUpQueue: Array<{ entryId: string; message: AgentMessage }> = [];
@@ -342,6 +364,8 @@ export class AgentHarness implements AgentLane {
 		this.hooks = new UnavailableRegistry("hooks.on", () => this.closed);
 		this.eventBus = new HarnessEventBus();
 		this.events = this.eventBus;
+		this.policy = options.policy;
+		this.approvalBroker = options.approvalBroker;
 		this.model = options.model;
 		this.thinkingLevel = options.thinkingLevel ?? "off";
 		this.activeToolNames = [...(options.activeToolNames ?? options.tools?.map((tool) => tool.name) ?? [])];
@@ -375,6 +399,7 @@ export class AgentHarness implements AgentLane {
 				}),
 			steeringMode: this.steeringMode,
 			followUpMode: this.followUpMode,
+			beforeToolCall: async (context, signal) => await this.authorizeToolCall(context, signal),
 		});
 		this.agent.subscribe(async (event) => this.handleAgentEvent(event));
 		this.snapshot = {
@@ -733,6 +758,45 @@ export class AgentHarness implements AgentLane {
 		await this.activeRun;
 	}
 
+	private async authorizeToolCall(
+		context: BeforeToolCallContext,
+		_signal?: AbortSignal,
+	): Promise<BeforeToolCallResult | undefined> {
+		if (!this.policy) return undefined;
+		const args = isRecord(context.args) ? context.args : {};
+		const request: PolicyRequest = {
+			toolName: context.toolCall.name,
+			toolArgs: context.args,
+			command: typeof args.command === "string" ? args.command : undefined,
+			path: typeof args.path === "string" ? args.path : undefined,
+			networkHost: typeof args.host === "string" ? args.host : undefined,
+			credentialName: typeof args.name === "string" ? args.name : undefined,
+		};
+		const decision = evaluatePolicy(this.policy, request);
+		if (decision.verdict === "allow") return undefined;
+		if (decision.verdict === "deny") {
+			return { block: true, terminate: true, reason: decision.reason };
+		}
+		const key = decision.ruleLabel ? policyApprovalKey(decision.ruleLabel, request) : undefined;
+		if (key && this.policySessionApprovals.has(key)) return undefined;
+		if (!this.approvalBroker) {
+			return { block: true, terminate: true, reason: "Approval broker is not configured" };
+		}
+		if (key && this.approvalBroker.hasApproval && (await this.approvalBroker.hasApproval(key))) return undefined;
+		const response = await this.approvalBroker.requestApproval({
+			toolName: request.toolName,
+			toolArgs: context.args,
+			reason: decision.reason,
+			scope: decision.scope ?? "once",
+		});
+		if (!response.approved) return { block: true, terminate: true, reason: response.reason };
+		if (key && response.scope === "session") this.policySessionApprovals.add(key);
+		if (key && response.scope === "persistent" && this.approvalBroker.rememberApproval) {
+			await this.approvalBroker.rememberApproval(key, response.scope);
+		}
+		return undefined;
+	}
+
 	private async executeRun(runId: string, messages: AgentMessage[]): Promise<RunResult> {
 		this.snapshot = { ...this.snapshot, operation: { id: runId, kind: "run", status: "running" } };
 		this.eventBus.emit({ type: "run_start", lane: this.name, runId });
@@ -884,6 +948,10 @@ function normalizeMessages(input: string | AgentMessage | AgentMessage[], images
 	if (Array.isArray(input)) return input;
 	if (typeof input !== "string") return [input];
 	return [{ role: "user", content: [{ type: "text", text: input }, ...(images ?? [])], timestamp: Date.now() }];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function toPersistableMessage(message: AgentMessage): AgentMessage {

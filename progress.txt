@@ -26,3 +26,10 @@ Source PRD: tasks/prd-code-harness.md
 - Validation: focused harness test passed (`7 tests`); JSONL storage/codec tests passed (`81 tests`); memory storage tests passed (`31 tests`).
 - Full `npm run check` remains blocked by the checkout's missing/generated model catalog data and baseline type errors outside this story.
 ---
+
+## 2026-08-30 10:35 Asia/Shanghai - US-004
+- Added public HarnessPolicy/PolicyRule/PolicyDecision/ApprovalBroker APIs and PolicyEnforcedExecutionEnv.
+- Enforced deny -> ask -> allow -> mode precedence, once/session/persistent approval hooks, conservative compound-shell parsing, lexical and physical path containment, network capability gating, credential authorization, and redacted policy audit records.
+- AgentHarness now evaluates policy before tool execution and blocks denied or unapproved effects.
+- Validation: focused policy and AgentHarness tests passed (`12 tests`); `npm run check` still exits 2 only on pre-existing missing/generated model catalog diagnostics, with no diagnostics in changed files.
+---

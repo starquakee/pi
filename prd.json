@@ -53,8 +53,8 @@
         "Compound commands and path escapes never auto-allow."
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Policy evaluator, approval scopes, conservative shell parser, physical path escape checks, network/credential authorization, audit redaction, and AgentHarness before-tool enforcement verified by focused tests."
     },
     {
       "id": "US-005",
