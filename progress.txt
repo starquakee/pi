@@ -45,3 +45,9 @@ Source PRD: tasks/prd-code-harness.md
 - Added task-scoped `WorktreeManager` that refuses dirty baselines, records baseline/commit/diff evidence, validates owned paths, and preserves dirty worktrees on cleanup.
 - Validation: focused backend, task, policy, and AgentHarness tests passed (`25 tests`); `npm run check` still exits 2 only on pre-existing missing/generated model catalog diagnostics, with no diagnostics in changed files.
 ---
+
+## 2026-08-30 10:51 Asia/Shanghai - US-007
+- Added role-based `SubagentOrchestrator` for planner/implementer/reviewer children with inherited model/thinking defaults and explicit overrides.
+- Enforced concurrency <=4, recursion depth <=1, child policy/workspace restrictions, independent worktree requirement for writes, structured results, and coordinator-only merge approval.
+- Validation: focused subagent, backend, task, policy, and AgentHarness tests passed (`27 tests`); `npm run check` still exits 2 only on pre-existing missing/generated model catalog diagnostics, with no diagnostics in changed files.
+---

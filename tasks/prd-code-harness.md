@@ -124,10 +124,10 @@ Pi already exposes an extensible agent loop, durable session primitives, tool ho
 
 **Acceptance Criteria:**
 
-- [ ] Planner, implementer, and reviewer roles are supported with inherited defaults and explicit model/thinking overrides.
-- [ ] Concurrency defaults to four and recursion depth to one, with hard upper bounds.
-- [ ] Child policy cannot exceed the parent policy and child worktree state is observable.
-- [ ] Results require coordinator approval before patch/commit application.
+- [x] Planner, implementer, and reviewer roles are supported with inherited defaults and explicit model/thinking overrides.
+- [x] Concurrency defaults to four and recursion depth to one, with hard upper bounds.
+- [x] Child policy cannot exceed the parent policy and child worktree state is observable.
+- [x] Results require coordinator approval before patch/commit application.
 
 ### US-008: Harness protocol namespace
 
