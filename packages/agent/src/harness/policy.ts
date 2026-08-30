@@ -801,7 +801,13 @@ function sanitizeAuditValue(value: unknown, key?: string): unknown {
 	if (key !== undefined && /(token|secret|password|credential|api[-_]?key|authorization)/i.test(key)) {
 		return "[REDACTED]";
 	}
-	if (typeof value === "string") return value.length > 4096 ? `${value.slice(0, 4096)}…` : value;
+	if (typeof value === "string") {
+		const redacted = value.replace(
+			/((?:token|secret|password|credential|api[-_]?key|authorization)\s*[=:]\s*)[^\s,;]+/gi,
+			"$1[REDACTED]",
+		);
+		return redacted.length > 4096 ? `${redacted.slice(0, 4096)}…` : redacted;
+	}
 	if (Array.isArray(value)) return value.slice(0, 100).map((item) => sanitizeAuditValue(item));
 	if (value !== null && typeof value === "object") {
 		const result: Record<string, unknown> = {};

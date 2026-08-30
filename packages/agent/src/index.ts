@@ -81,6 +81,7 @@ export * from "./harness/result.ts";
 export * from "./harness/session/index.ts";
 export * from "./harness/skills.ts";
 export * from "./harness/system-prompt.ts";
+export * from "./harness/task-orchestrator.ts";
 export type {
 	AiSpan,
 	AiSpanAttributes,

@@ -33,3 +33,9 @@ Source PRD: tasks/prd-code-harness.md
 - AgentHarness now evaluates policy before tool execution and blocks denied or unapproved effects.
 - Validation: focused policy and AgentHarness tests passed (`12 tests`); `npm run check` still exits 2 only on pre-existing missing/generated model catalog diagnostics, with no diagnostics in changed files.
 ---
+
+## 2026-08-30 10:42 Asia/Shanghai - US-005
+- Added TaskOrchestrator and authoritative TaskSnapshot lifecycle for planned, approval, execute, pause/resume, verify, failed, and completed states.
+- Added explicit plan approval gates, required verification command evidence with exit code/duration/bounded output, diff summaries, and global-path JsonlAuditSink plus in-memory test sink with secret redaction.
+- Validation: focused task, policy, and AgentHarness tests passed (`15 tests`); `npm run check` still exits 2 only on pre-existing missing/generated model catalog diagnostics, with no diagnostics in changed files.
+---

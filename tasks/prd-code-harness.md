@@ -102,10 +102,10 @@ Pi already exposes an extensible agent loop, durable session primitives, tool ho
 
 **Acceptance Criteria:**
 
-- [ ] Task snapshots support `planned`, `awaiting_approval`, `executing`, `verifying`, `paused`, `failed`, and `completed`.
-- [ ] Execute rejects plans that have not been explicitly approved.
-- [ ] Verify records required commands, exit codes, duration, bounded output, and diff summary; any required failure prevents `completed`.
-- [ ] Global per-project JSONL metadata is used and secrets are redacted.
+- [x] Task snapshots support `planned`, `awaiting_approval`, `executing`, `verifying`, `paused`, `failed`, and `completed`.
+- [x] Execute rejects plans that have not been explicitly approved.
+- [x] Verify records required commands, exit codes, duration, bounded output, and diff summary; any required failure prevents `completed`.
+- [x] Global per-project JSONL metadata is used and secrets are redacted.
 
 ### US-006: Execution backends and Git worktrees
 
