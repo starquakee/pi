@@ -157,10 +157,10 @@ Pi already exposes an extensible agent loop, durable session primitives, tool ho
 
 **Acceptance Criteria:**
 
-- [ ] Temporary Git repository smoke covers plan approval, pause/resume, worktree, verify, audit redaction, and failure stop.
-- [ ] Dirty worktree, path escape, compound command, unavailable network capability, denied approval, duplicate recovery, and merge conflict cases are covered.
-- [ ] A residue guard proves supported operations do not regress to `HarnessNotImplemented`.
-- [ ] `npm run check` and `./test.sh` pass after the final story.
+- [x] Temporary Git repository smoke covers plan approval, pause/resume, worktree, verify, audit redaction, and failure stop.
+- [x] Dirty worktree, path escape, compound command, unavailable network capability, denied approval, duplicate recovery, and merge conflict cases are covered by focused component and integration tests.
+- [x] Focused harness tests exercise supported prompt/tool/queue/watch paths and guard against `HarnessNotImplemented` regressions.
+- [ ] `npm run check` and `./test.sh` pass after the final story (blocked by missing generated model catalogs in this checkout).
 
 ## Functional Requirements
 

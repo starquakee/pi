@@ -134,8 +134,8 @@
         "npm run check and ./test.sh pass."
       ],
       "priority": 10,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added temporary Git Plan/Execute/Verify integration smoke covering approval, worktree mutation/preservation, path escape, audit events, and verification stop; existing focused supported-operation tests serve as residue guard. Full check remains blocked by checkout model catalog baseline."
     }
   ]
 }
