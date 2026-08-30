@@ -10,6 +10,10 @@ import {
 import {
 	type ClientMessage,
 	ClientMessageSchema,
+	type HarnessClientMessage,
+	HarnessClientMessageSchema,
+	type HarnessServerMessage,
+	HarnessServerMessageSchema,
 	PROTOCOL_VERSION,
 	type ServerMessage,
 	ServerMessageSchema,
@@ -52,6 +56,20 @@ export function parseServerMessage(value: unknown): ServerMessage {
 	return value;
 }
 
+export function parseHarnessClientMessage(value: unknown): HarnessClientMessage {
+	if (!isProtocolValue(value) || !Check(HarnessClientMessageSchema, value)) {
+		throw new ProtocolValidationError("Invalid harness client protocol message");
+	}
+	return value;
+}
+
+export function parseHarnessServerMessage(value: unknown): HarnessServerMessage {
+	if (!isProtocolValue(value) || !Check(HarnessServerMessageSchema, value)) {
+		throw new ProtocolValidationError("Invalid harness server protocol message");
+	}
+	return value;
+}
+
 function boundedErrorMessage(error: unknown): string {
 	if (!(error instanceof Error)) return "Unknown codec error";
 	return error.message.length <= 500 ? error.message : `${error.message.slice(0, 497)}...`;
@@ -83,6 +101,15 @@ export function encodeClientMessage(message: ClientMessage, options?: FrameDecod
 /** Validates and encodes one complete length-prefixed server message. */
 export function encodeServerMessage(message: ServerMessage, options?: FrameDecoderOptions): Uint8Array {
 	return encodeProtocolMessage(message, parseServerMessage, "server", options);
+}
+
+/** Validates and encodes one harness namespace message over the existing CBOR framing. */
+export function encodeHarnessClientMessage(message: HarnessClientMessage, options?: FrameDecoderOptions): Uint8Array {
+	return encodeProtocolMessage(message, parseHarnessClientMessage, "harness client", options);
+}
+
+export function encodeHarnessServerMessage(message: HarnessServerMessage, options?: FrameDecoderOptions): Uint8Array {
+	return encodeProtocolMessage(message, parseHarnessServerMessage, "harness server", options);
 }
 
 class ValidatedMessageDecoder<T> {
@@ -167,6 +194,50 @@ export function createServerMessageDecoder(options?: FrameDecoderOptions): Serve
 	return new ServerMessageDecoder(options);
 }
 
+export class HarnessClientMessageDecoder {
+	private readonly decoder: ValidatedMessageDecoder<HarnessClientMessage>;
+
+	constructor(options?: FrameDecoderOptions) {
+		this.decoder = new ValidatedMessageDecoder("harness client", parseHarnessClientMessage, options);
+	}
+
+	push(chunk: Uint8Array): HarnessClientMessage[] {
+		return this.decoder.push(chunk);
+	}
+
+	end(): void {
+		this.decoder.end();
+	}
+}
+
+export class HarnessServerMessageDecoder {
+	private readonly decoder: ValidatedMessageDecoder<HarnessServerMessage>;
+
+	constructor(options?: FrameDecoderOptions) {
+		this.decoder = new ValidatedMessageDecoder("harness server", parseHarnessServerMessage, options);
+	}
+
+	push(chunk: Uint8Array): HarnessServerMessage[] {
+		return this.decoder.push(chunk);
+	}
+
+	end(): void {
+		this.decoder.end();
+	}
+}
+
+export function createHarnessClientMessageDecoder(options?: FrameDecoderOptions): HarnessClientMessageDecoder {
+	return new HarnessClientMessageDecoder(options);
+}
+
+export function createHarnessServerMessageDecoder(options?: FrameDecoderOptions): HarnessServerMessageDecoder {
+	return new HarnessServerMessageDecoder(options);
+}
+
 export function isSupportedProtocolVersion(version: number): version is typeof PROTOCOL_VERSION {
 	return Number.isInteger(version) && version === PROTOCOL_VERSION;
+}
+
+export function isSupportedHarnessProtocolVersion(version: number): version is 1 {
+	return Number.isInteger(version) && version === 1;
 }

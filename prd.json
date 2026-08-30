@@ -106,8 +106,8 @@
         "Client/server tests cover stale, duplicate, denied, and disconnected approvals."
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added harness namespace schemas and CBOR codecs over existing framing, revision/approval trackers for stale/duplicate/disconnected recovery, and client/server harness contract types while preserving protocol v1."
     },
     {
       "id": "US-009",

@@ -1,5 +1,9 @@
 import type {
 	Command,
+	HarnessApprovalRequest,
+	HarnessApprovalResponse,
+	HarnessCapability,
+	HarnessTaskSnapshot,
 	ModelMetadata,
 	ModelRef,
 	SessionMetadata,
@@ -61,3 +65,10 @@ export interface PiServerService {
 
 export type SessionRuntime = PiSessionRuntime;
 export type SessionRuntimeEvent = PiSessionRuntimeEvent;
+
+export interface HarnessRuntime {
+	snapshot(): MaybePromise<HarnessTaskSnapshot>;
+	capabilities(): MaybePromise<HarnessCapability>;
+	approve(response: HarnessApprovalResponse): MaybePromise<void>;
+	requestApproval(): MaybePromise<HarnessApprovalRequest>;
+}

@@ -51,3 +51,9 @@ Source PRD: tasks/prd-code-harness.md
 - Enforced concurrency <=4, recursion depth <=1, child policy/workspace restrictions, independent worktree requirement for writes, structured results, and coordinator-only merge approval.
 - Validation: focused subagent, backend, task, policy, and AgentHarness tests passed (`27 tests`); `npm run check` still exits 2 only on pre-existing missing/generated model catalog diagnostics, with no diagnostics in changed files.
 ---
+
+## 2026-08-30 10:56 Asia/Shanghai - US-008
+- Added versioned `harness` namespace DTO schemas, framed CBOR encode/decode helpers, task snapshots, progress, approval, capability, and audit summary messages without changing legacy protocol v1.
+- Added authoritative snapshot revision tracking and stale/duplicate/unknown approval response guards; exported client/server harness contract types.
+- Validation: harness protocol focused tests passed (`4 tests`); `npm run check` still exits 2 only on pre-existing missing/generated model catalog diagnostics, with no diagnostics in changed files.
+---

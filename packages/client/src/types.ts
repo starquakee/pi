@@ -1,4 +1,10 @@
-import type { ModelRef, ThinkingLevel } from "@earendil-works/pi-protocol";
+import type {
+	HarnessApprovalResponse,
+	HarnessCapability,
+	HarnessTaskSnapshot,
+	ModelRef,
+	ThinkingLevel,
+} from "@earendil-works/pi-protocol";
 import type { ByteTransportFactory } from "./transport.ts";
 
 export type ConnectionState = "disconnected" | "connecting" | "connected";
@@ -24,3 +30,8 @@ export interface CreateSessionOptions {
 	model?: ModelRef;
 	thinkingLevel?: ThinkingLevel;
 }
+
+/** Client-side harness state is snapshot-based; progress messages are hints only. */
+export type HarnessSnapshot = HarnessTaskSnapshot;
+export type HarnessApproval = HarnessApprovalResponse;
+export type HarnessCapabilities = HarnessCapability;

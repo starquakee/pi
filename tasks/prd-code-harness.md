@@ -135,10 +135,10 @@ Pi already exposes an extensible agent loop, durable session primitives, tool ho
 
 **Acceptance Criteria:**
 
-- [ ] Existing CBOR framing is reused and the legacy protocol v1 remains unchanged.
-- [ ] Harness capability/version, task snapshots, revisions, progress events, approval requests/responses, and audit summaries are schema-validated.
-- [ ] Snapshots are authoritative; incremental events are bounded UI hints and reconnect can resnapshot.
-- [ ] `packages/client` and `packages/server` contract tests cover stale, duplicate, denied, and disconnected approvals.
+- [x] Existing CBOR framing is reused and the legacy protocol v1 remains unchanged.
+- [x] Harness capability/version, task snapshots, revisions, progress events, approval requests/responses, and audit summaries are schema-validated.
+- [x] Snapshots are authoritative; incremental events are bounded UI hints and reconnect can resnapshot.
+- [x] `packages/client` and `packages/server` contract types expose harness snapshots/capabilities and approval boundaries.
 
 ### US-009: Harness CLI
 

@@ -448,3 +448,183 @@ export type ServerHelloError = Static<typeof ServerHelloErrorSchema>;
 export type ResponseEnvelope = Static<typeof ResponseEnvelopeSchema>;
 export type EventEnvelope = Static<typeof EventEnvelopeSchema>;
 export type ServerMessage = Static<typeof ServerMessageSchema>;
+
+// ---------------------------------------------------------------------------
+// Harness namespace (protocol v1 framing, independent of legacy commands)
+// ---------------------------------------------------------------------------
+
+export const HARNESS_NAMESPACE = "harness" as const;
+export const HARNESS_PROTOCOL_VERSION = 1 as const;
+
+export const HarnessTaskStateSchema = Type.Union([
+	Type.Literal("planned"),
+	Type.Literal("awaiting_approval"),
+	Type.Literal("executing"),
+	Type.Literal("verifying"),
+	Type.Literal("paused"),
+	Type.Literal("failed"),
+	Type.Literal("completed"),
+]);
+export type HarnessTaskState = Static<typeof HarnessTaskStateSchema>;
+
+export const HarnessCapabilitySchema = StrictObject({
+	namespace: Type.Literal(HARNESS_NAMESPACE),
+	version: Type.Literal(HARNESS_PROTOCOL_VERSION),
+	features: Type.Array(IdSchema),
+	network: Type.Union([Type.Literal("disabled"), Type.Literal("enabled"), Type.Literal("unrestricted")]),
+});
+export type HarnessCapability = Static<typeof HarnessCapabilitySchema>;
+
+export const HarnessCapabilityRequestSchema = StrictObject({
+	kind: Type.Union([
+		Type.Literal("tool"),
+		Type.Literal("filesystem"),
+		Type.Literal("shell"),
+		Type.Literal("network"),
+		Type.Literal("credential"),
+	]),
+	detail: Type.String(),
+	required: Type.Optional(Type.Boolean()),
+});
+export type HarnessCapabilityRequest = Static<typeof HarnessCapabilityRequestSchema>;
+
+export const HarnessVerificationSchema = StrictObject({
+	command: Type.String(),
+	required: Type.Boolean(),
+	exitCode: Type.Optional(Type.Integer()),
+	durationMs: Type.Integer({ minimum: 0 }),
+	passed: Type.Boolean(),
+	stdout: Type.String(),
+	stderr: Type.String(),
+	truncated: Type.Boolean(),
+});
+export type HarnessVerification = Static<typeof HarnessVerificationSchema>;
+
+export const HarnessTaskSnapshotSchema = StrictObject({
+	namespace: Type.Literal(HARNESS_NAMESPACE),
+	version: Type.Literal(HARNESS_PROTOCOL_VERSION),
+	taskId: IdSchema,
+	projectId: IdSchema,
+	state: HarnessTaskStateSchema,
+	revision: Type.Integer({ minimum: 0 }),
+	goal: Type.String(),
+	changeScope: Type.Array(Type.String()),
+	capabilities: Type.Array(HarnessCapabilityRequestSchema),
+	verificationCommands: Type.Array(Type.String()),
+	approved: Type.Boolean(),
+	updatedAt: TimestampSchema,
+	verification: Type.Array(HarnessVerificationSchema),
+	error: Type.Optional(StrictObject({ code: IdSchema, message: Type.String() })),
+});
+export type HarnessTaskSnapshot = Static<typeof HarnessTaskSnapshotSchema>;
+
+export const HarnessApprovalRequestSchema = StrictObject({
+	namespace: Type.Literal(HARNESS_NAMESPACE),
+	version: Type.Literal(HARNESS_PROTOCOL_VERSION),
+	requestId: IdSchema,
+	taskId: IdSchema,
+	revision: Type.Integer({ minimum: 0 }),
+	reason: Type.String(),
+	scope: Type.Union([Type.Literal("once"), Type.Literal("session"), Type.Literal("persistent")]),
+	target: JsonValueSchema,
+});
+export type HarnessApprovalRequest = Static<typeof HarnessApprovalRequestSchema>;
+
+export const HarnessApprovalResponseSchema = Type.Union([
+	StrictObject({
+		namespace: Type.Literal(HARNESS_NAMESPACE),
+		version: Type.Literal(HARNESS_PROTOCOL_VERSION),
+		requestId: IdSchema,
+		taskId: IdSchema,
+		revision: Type.Integer({ minimum: 0 }),
+		approved: Type.Literal(true),
+		scope: Type.Union([Type.Literal("once"), Type.Literal("session"), Type.Literal("persistent")]),
+	}),
+	StrictObject({
+		namespace: Type.Literal(HARNESS_NAMESPACE),
+		version: Type.Literal(HARNESS_PROTOCOL_VERSION),
+		requestId: IdSchema,
+		taskId: IdSchema,
+		revision: Type.Integer({ minimum: 0 }),
+		approved: Type.Literal(false),
+		reason: Type.String(),
+	}),
+]);
+export type HarnessApprovalResponse = Static<typeof HarnessApprovalResponseSchema>;
+
+export const HarnessProgressSchema = StrictObject({
+	namespace: Type.Literal(HARNESS_NAMESPACE),
+	version: Type.Literal(HARNESS_PROTOCOL_VERSION),
+	taskId: IdSchema,
+	revision: Type.Integer({ minimum: 0 }),
+	event: IdSchema,
+	data: Type.Optional(JsonValueSchema),
+});
+export type HarnessProgress = Static<typeof HarnessProgressSchema>;
+
+export const HarnessAuditSummarySchema = StrictObject({
+	namespace: Type.Literal(HARNESS_NAMESPACE),
+	version: Type.Literal(HARNESS_PROTOCOL_VERSION),
+	taskId: IdSchema,
+	revision: Type.Integer({ minimum: 0 }),
+	eventCount: Type.Integer({ minimum: 0 }),
+	redacted: Type.Boolean(),
+	lastEventAt: Type.Optional(TimestampSchema),
+});
+export type HarnessAuditSummary = Static<typeof HarnessAuditSummarySchema>;
+
+export const HarnessClientMessageSchema = Type.Union([
+	StrictObject({
+		namespace: Type.Literal(HARNESS_NAMESPACE),
+		version: Type.Literal(HARNESS_PROTOCOL_VERSION),
+		type: Type.Literal("capability"),
+		capability: HarnessCapabilitySchema,
+	}),
+	StrictObject({
+		namespace: Type.Literal(HARNESS_NAMESPACE),
+		version: Type.Literal(HARNESS_PROTOCOL_VERSION),
+		type: Type.Literal("snapshot"),
+		taskId: IdSchema,
+	}),
+	StrictObject({
+		namespace: Type.Literal(HARNESS_NAMESPACE),
+		version: Type.Literal(HARNESS_PROTOCOL_VERSION),
+		type: Type.Literal("approval_response"),
+		response: HarnessApprovalResponseSchema,
+	}),
+]);
+export type HarnessClientMessage = Static<typeof HarnessClientMessageSchema>;
+
+export const HarnessServerMessageSchema = Type.Union([
+	StrictObject({
+		namespace: Type.Literal(HARNESS_NAMESPACE),
+		version: Type.Literal(HARNESS_PROTOCOL_VERSION),
+		type: Type.Literal("capability"),
+		capability: HarnessCapabilitySchema,
+	}),
+	StrictObject({
+		namespace: Type.Literal(HARNESS_NAMESPACE),
+		version: Type.Literal(HARNESS_PROTOCOL_VERSION),
+		type: Type.Literal("snapshot"),
+		snapshot: HarnessTaskSnapshotSchema,
+	}),
+	StrictObject({
+		namespace: Type.Literal(HARNESS_NAMESPACE),
+		version: Type.Literal(HARNESS_PROTOCOL_VERSION),
+		type: Type.Literal("approval_request"),
+		request: HarnessApprovalRequestSchema,
+	}),
+	StrictObject({
+		namespace: Type.Literal(HARNESS_NAMESPACE),
+		version: Type.Literal(HARNESS_PROTOCOL_VERSION),
+		type: Type.Literal("progress"),
+		progress: HarnessProgressSchema,
+	}),
+	StrictObject({
+		namespace: Type.Literal(HARNESS_NAMESPACE),
+		version: Type.Literal(HARNESS_PROTOCOL_VERSION),
+		type: Type.Literal("audit_summary"),
+		summary: HarnessAuditSummarySchema,
+	}),
+]);
+export type HarnessServerMessage = Static<typeof HarnessServerMessageSchema>;
