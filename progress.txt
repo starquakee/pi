@@ -68,3 +68,9 @@ Source PRD: tasks/prd-code-harness.md
 - Focused harness tests cover supported prompt/tool/queue/watch operations as a residue guard against reintroducing `HarnessNotImplemented` on those paths.
 - Validation: full harness focused set passed (`28 tests`); `npm run check` remains blocked by missing/generated model catalogs outside changed files, and the final checkbox remains open.
 ---
+
+## 2026-08-30 11:10 - Final validation
+- Focused agent harness tests (`20`), protocol harness tests (`4`), and coding-agent CLI tests (`2`) pass.
+- `npm run check` reports no diagnostics in changed files but exits non-zero on missing/generated provider model catalogs in this checkout.
+- `./test.sh` was run and exits non-zero on baseline/environment issues: Node 22.12 lacks `node:sqlite`, Git Bash path expectations differ on Windows, and temporary socket cleanup reports resource-busy handles. US-010 remains `passes: false` until a compatible environment reruns the complete regression.
+---
