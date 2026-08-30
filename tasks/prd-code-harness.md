@@ -113,10 +113,10 @@ Pi already exposes an extensible agent loop, durable session primitives, tool ho
 
 **Acceptance Criteria:**
 
-- [ ] Local execution wraps the existing `ExecutionEnv`/`BashOperations` contracts.
-- [ ] `SandboxAdapter` declares capabilities and lifecycle without embedding Docker/QEMU logic in the core.
-- [ ] `WorktreeManager` records baseline, path, commits, and diff; refuses dirty baselines and only cleans harness-owned paths.
-- [ ] Child write results are patches/commits plus evidence; no automatic merge occurs.
+- [x] Local execution wraps the existing `ExecutionEnv`/`BashOperations` contracts.
+- [x] `SandboxAdapter` declares capabilities and lifecycle without embedding Docker/QEMU logic in the core.
+- [x] `WorktreeManager` records baseline, path, commits, and diff; refuses dirty baselines and only cleans harness-owned paths.
+- [x] Child write results are patches/commits plus evidence; no automatic merge occurs.
 
 ### US-007: Bounded subagent orchestration
 
