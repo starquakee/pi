@@ -57,3 +57,8 @@ Source PRD: tasks/prd-code-harness.md
 - Added authoritative snapshot revision tracking and stale/duplicate/unknown approval response guards; exported client/server harness contract types.
 - Validation: harness protocol focused tests passed (`4 tests`); `npm run check` still exits 2 only on pre-existing missing/generated model catalog diagnostics, with no diagnostics in changed files.
 ---
+
+## 2026-08-30 11:02 Asia/Shanghai - US-009
+- Added isolated `pi harness plan|run|verify|status` CLI commands with strict `.pi/harness.json` version-1 validation, explicit approval gate, persisted task files, human/JSON output, local verification execution, bounded/redacted global audit output, and help text.
+- Validation: coding-agent harness CLI tests passed (`2 tests`); `npm run check` still exits 2 only on pre-existing missing/generated model catalog diagnostics, with no diagnostics in changed files.
+---

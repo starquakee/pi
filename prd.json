@@ -120,8 +120,8 @@
         "Existing pi commands retain current behavior."
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added isolated harness CLI plan/run/verify/status handling, strict version-1 project config validation, human/JSON output, explicit approval gate, task persistence, local verification, bounded redacted global audit, and help documentation."
     },
     {
       "id": "US-010",

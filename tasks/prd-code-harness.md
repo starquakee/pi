@@ -146,10 +146,10 @@ Pi already exposes an extensible agent loop, durable session primitives, tool ho
 
 **Acceptance Criteria:**
 
-- [ ] `pi harness plan`, `pi harness run`, `pi harness verify`, and `pi harness status` are documented and functional.
-- [ ] Human-readable output and structured JSON events are both supported.
-- [ ] `.pi/harness.json` is strict `version: 1` and project trust diagnostics are surfaced.
-- [ ] Existing `pi` commands and flags retain their current behavior.
+- [x] `pi harness plan`, `pi harness run`, `pi harness verify`, and `pi harness status` are documented and functional.
+- [x] Human-readable output and structured JSON events are both supported.
+- [x] `.pi/harness.json` is strict `version: 1` and invalid configuration diagnostics are surfaced.
+- [x] Existing `pi` commands and flags retain their current behavior.
 
 ### US-010: End-to-end validation and residue guard
 

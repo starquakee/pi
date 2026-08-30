@@ -272,6 +272,7 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} list                      List installed extensions from settings
   ${APP_NAME} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
   ${APP_NAME} auth <command>            Print credentials or check provider readiness
+  ${APP_NAME} harness <plan|run|verify|status>  Run the local Plan -> Execute -> Verify harness
   ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth
 
 ${chalk.bold("Options:")}
@@ -340,6 +341,11 @@ ${chalk.bold("Examples:")}
 
   # Non-interactive mode (process and exit)
   ${APP_NAME} -p "List all .ts files in src/"
+
+  # Plan and execute a local harness task
+  ${APP_NAME} harness plan "Add a regression test"
+  ${APP_NAME} harness run <task-id> --approve
+  ${APP_NAME} harness verify <task-id>
 
   # Prompt beginning with a dash
   ${APP_NAME} -p -- "- Summarize these points"
